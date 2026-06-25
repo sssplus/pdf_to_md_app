@@ -1,29 +1,35 @@
 # Doc2MD
 
-> Convert **PDF**, **DOC**, and **DOCX** files to clean **Markdown** — drag, drop, done.
+> Convert **PDF / DOC / DOCX** to clean **Markdown**, or **compress** PDF and
+> Word files — drag, drop, done.
 
 Doc2MD is a small full-stack app with a React frontend and a FastAPI backend. It
 uses Microsoft's [`markitdown`](https://github.com/microsoft/markitdown) library
-to turn documents into Markdown, with a live preview, a raw view, copy, and
-download.
+to turn documents into Markdown (live preview, raw view, copy, download), and
+shrinks PDF/DOCX files with Ghostscript and Pillow.
 
 ![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)
 
 ## Features
 
 - 🗂️ **Drag & drop** upload (PDF, DOC, DOCX)
-- 👀 **Live preview** of the rendered Markdown, plus a **raw** view
-- 📋 **Copy to clipboard** and 💾 **download** as `.md`
+- 🔄 **Convert** documents to Markdown — **live preview** + **raw** view
+- 🗜️ **Compress** PDF and DOCX files with selectable quality, showing how much
+  smaller the result is
+- 📋 **Copy to clipboard** and 💾 **download** results
 - 🔒 Sanitized HTML preview (DOMPurify) — safe rendering of untrusted documents
-- 🧹 Files are processed in a temp file and **deleted immediately** — never stored
+- 🧹 Files are processed in memory / a temp file and **never stored**
 - ⚙️ Configurable API URL, upload size limit, and CORS origins
 
 ## Tech stack
 
-| Layer    | Tools                                     |
-| -------- | ----------------------------------------- |
-| Frontend | React 18, Vite, react-dropzone, marked, DOMPurify |
-| Backend  | FastAPI, Uvicorn, markitdown              |
+| Layer    | Tools                                                       |
+| -------- | ----------------------------------------------------------- |
+| Frontend | React 18, Vite, react-dropzone, marked, DOMPurify           |
+| Backend  | FastAPI, Uvicorn, markitdown, pikepdf, Pillow, Ghostscript* |
+
+\* Ghostscript is an **optional** system binary. When present it is used for
+PDF compression (best results); otherwise the backend falls back to `pikepdf`.
 
 ## Getting started
 
@@ -31,6 +37,10 @@ download.
 
 - [Node.js](https://nodejs.org/) 18+
 - [Python](https://www.python.org/) 3.10+
+- _(optional)_ [Ghostscript](https://www.ghostscript.com/) for best PDF
+  compression — `apt-get install ghostscript` (Debian/Ubuntu),
+  `brew install ghostscript` (macOS). Without it, PDF compression falls back to
+  `pikepdf`.
 
 ### 1. Backend
 
@@ -74,11 +84,24 @@ Open <http://localhost:5173>, drop in a document, and watch it convert.
 
 ### `POST /api/convert`
 
-Multipart form upload with a single `file` field. Returns the converted Markdown
-as `text/markdown`.
+Multipart form upload with a single `file` field (`.pdf`, `.doc`, `.docx`).
+Returns the converted Markdown as `text/markdown`.
 
 ```bash
 curl -F "file=@document.pdf" http://localhost:8000/api/convert
+```
+
+### `POST /api/compress`
+
+Multipart form upload with a single `file` field (`.pdf` or `.docx`). Optional
+`quality` query parameter: `screen` (smallest), `ebook` (default), or
+`printer` (highest quality). Returns the compressed file as a binary download,
+with `X-Original-Size` and `X-Compressed-Size` response headers. If compression
+can't beat the original, the original bytes are returned unchanged.
+
+```bash
+curl -F "file=@document.pdf" \
+  "http://localhost:8000/api/compress?quality=ebook" -o document-compressed.pdf
 ```
 
 Error responses are JSON with a `detail` message and an appropriate status code
@@ -92,7 +115,8 @@ Returns `{"status": "ok"}` for liveness checks.
 
 ```
 pdf_to_md_app/
-├── main.py             # FastAPI backend
+├── main.py             # FastAPI backend (convert + compress endpoints)
+├── compression.py      # PDF/DOCX compression helpers
 ├── requirements.txt    # Python dependencies
 ├── index.html          # Vite entry point
 ├── package.json

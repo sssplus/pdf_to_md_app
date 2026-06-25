@@ -3,3 +3,9 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 markitdown[pdf,docx]>=0.0.1
+
+# Compression. pikepdf is the pip-installable PDF fallback (qpdf bundled in the
+# wheel); Ghostscript is an optional system binary used when present for better
+# results. Pillow (already pulled in by markitdown) re-encodes DOCX images.
+pikepdf>=8.0
+Pillow>=10.0
