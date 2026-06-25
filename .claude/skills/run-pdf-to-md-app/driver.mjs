@@ -12,7 +12,8 @@
 //   - Frontend dev server running on $APP_URL (default http://localhost:5173).
 //
 // Usage:
-//   node driver.mjs <file-to-upload> [outdir]
+//   node driver.mjs <file-to-upload> [outdir] [mode]
+//     mode: "convert" (default) or "compress"
 //
 // Env overrides: APP_URL, OUT_DIR.
 
@@ -29,6 +30,7 @@ const { chromium } = require('playwright');
 const APP_URL = process.env.APP_URL || 'http://localhost:5173';
 const uploadFile = process.argv[2];
 const OUT_DIR = process.argv[3] || process.env.OUT_DIR || '/tmp/doc2md-shots';
+const MODE = process.argv[4] || 'convert'; // "convert" | "compress"
 
 if (!uploadFile || !fs.existsSync(uploadFile)) {
   console.error(`Usage: node driver.mjs <file-to-upload> [outdir]\n` +
@@ -54,22 +56,35 @@ const shot = async (page, name) => {
     await page.waitForSelector('text=Doc2MD');
     await shot(page, '1-landing');
 
-    // The dropzone renders a hidden <input type="file">. Set it directly.
-    await page.setInputFiles('input[type=file]', uploadFile);
+    if (MODE === 'compress') {
+      // Switch to Compress mode, then upload.
+      await page.click('button[role=tab]:has-text("Compress file")');
+      await page.setInputFiles('input[type=file]', uploadFile);
 
-    // Wait for the conversion result (the Download button only appears on success).
-    await page.waitForSelector('button:has-text("Download")', { timeout: 30000 });
-    await shot(page, '2-preview');
+      // Success = the compressed-download button appears.
+      await page.waitForSelector('button:has-text("Download compressed file")', { timeout: 30000 });
+      const summary = await page.locator('.result-card').innerText();
+      console.log('--- compression result ---');
+      console.log(summary);
+      await shot(page, '2-compress');
+    } else {
+      // The dropzone renders a hidden <input type="file">. Set it directly.
+      await page.setInputFiles('input[type=file]', uploadFile);
 
-    // Confirm rendered Markdown made it into the DOM.
-    const rendered = await page.locator('.markdown-body').innerText();
-    console.log('--- rendered preview (first 200 chars) ---');
-    console.log(rendered.slice(0, 200));
+      // Wait for the conversion result (the Download button only appears on success).
+      await page.waitForSelector('button:has-text("Download")', { timeout: 30000 });
+      await shot(page, '2-preview');
 
-    // Toggle to the Raw view and screenshot that too.
-    await page.click('button[role=tab]:has-text("Raw")');
-    await page.waitForSelector('.markdown-raw');
-    await shot(page, '3-raw');
+      // Confirm rendered Markdown made it into the DOM.
+      const rendered = await page.locator('.markdown-body').innerText();
+      console.log('--- rendered preview (first 200 chars) ---');
+      console.log(rendered.slice(0, 200));
+
+      // Toggle to the Raw view and screenshot that too.
+      await page.click('button[role=tab]:has-text("Raw")');
+      await page.waitForSelector('.markdown-raw');
+      await shot(page, '3-raw');
+    }
 
     if (errors.length) {
       console.log('\nconsole errors:');
