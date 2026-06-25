@@ -1,0 +1,5 @@
+# Backend dependencies for the Doc2MD Converter API.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+markitdown[pdf,docx]>=0.0.1
