@@ -1,0 +1,18 @@
+# Render.com Blueprint for the Doc2MD backend.
+# In Render: New → Blueprint → point at this repo. Render builds the Dockerfile.
+#
+# After the first deploy, set ALLOWED_ORIGINS to your GitHub Pages origin if it
+# differs from the default below (origin only — no path, no trailing slash).
+services:
+  - type: web
+    name: doc2md-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      # GitHub Pages origin allowed to call the API (no path/trailing slash).
+      - key: ALLOWED_ORIGINS
+        value: https://sssplus.github.io
+      - key: MAX_UPLOAD_MB
+        value: "25"

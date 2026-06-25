@@ -1,0 +1,25 @@
+# Frontend — not part of the backend image.
+node_modules/
+dist/
+src/
+public/
+index.html
+package.json
+package-lock.json
+vite.config.js
+eslint.config.js
+.env
+.env.*
+
+# Python caches / virtualenvs.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Tooling, docs, VCS.
+.git/
+.github/
+.claude/
+*.md
+LICENSE
