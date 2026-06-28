@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react'
 // `base` defaults to '/' for local dev. For a GitHub Pages *project* site the
 // app is served from /<repo>/, so the Pages workflow sets VITE_BASE=/pdf_to_md_app/.
 export default defineConfig({
+  base: '/pdf_to_md_app/',
   plugins: [react()],
   base: process.env.VITE_BASE ?? '/',
 })
