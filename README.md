@@ -118,11 +118,14 @@ pdf_to_md_app/
 ├── main.py             # FastAPI backend (convert + compress endpoints)
 ├── compression.py      # PDF/DOCX compression helpers
 ├── requirements.txt    # Python dependencies
+├── Dockerfile          # Backend container image
+├── render.yaml         # Render.com deployment blueprint
 ├── index.html          # Vite entry point
 ├── package.json
 ├── vite.config.js
 ├── eslint.config.js
 ├── .env.example
+├── .github/workflows/  # CI: GitHub Pages deploy
 └── src/                # React frontend
     ├── main.jsx
     ├── App.jsx
@@ -139,6 +142,44 @@ npm run preview         # preview the production build locally
 
 Serve `dist/` with any static host and point it at your deployed backend via
 `VITE_API_URL` at build time.
+
+## Deployment
+
+GitHub can't host the Python backend (Pages serves static files only), so the
+two halves deploy separately: **frontend → GitHub Pages**, **backend → any
+container host**. Deploy the backend first so you have its URL for the frontend
+build.
+
+### 1. Backend → a container host
+
+The included [`Dockerfile`](Dockerfile) runs the API (with Ghostscript) on any
+Docker host. Locally:
+
+```bash
+docker build -t doc2md-api .
+docker run -p 8000:8000 -e ALLOWED_ORIGINS=https://<user>.github.io doc2md-api
+```
+
+On [Render](https://render.com): **New → Blueprint** and point it at this repo —
+[`render.yaml`](render.yaml) provisions a Docker web service with a `/health`
+check. (Railway and Fly.io auto-detect the `Dockerfile` too.) Set
+**`ALLOWED_ORIGINS`** to your GitHub Pages origin (e.g.
+`https://<user>.github.io`, origin only — no path). Note the service URL, e.g.
+`https://doc2md-api.onrender.com`.
+
+### 2. Frontend → GitHub Pages
+
+The [`deploy-pages.yml`](.github/workflows/deploy-pages.yml) workflow builds and
+publishes `src/` on every push to `main`. One-time setup:
+
+1. **Settings → Secrets and variables → Actions → Variables** → add
+   **`VITE_API_URL`** = your backend URL from step 1.
+2. **Settings → Pages → Source** → **GitHub Actions**.
+3. Push to `main` (or run the workflow manually).
+
+The app goes live at `https://<user>.github.io/pdf_to_md_app/`. If you use a
+custom domain or a `<user>.github.io` user-site repo, change `VITE_BASE` in the
+workflow from `/pdf_to_md_app/` to `/`.
 
 ## Contributing
 

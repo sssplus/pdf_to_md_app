@@ -1,0 +1,52 @@
+name: Deploy Frontend to GitHub Pages
+
+# Builds the Vite frontend and publishes it to GitHub Pages.
+# Requires (Settings → Secrets and variables → Actions → Variables):
+#   VITE_API_URL = the public URL of your deployed backend
+#     (e.g. https://doc2md-api.onrender.com)
+# And: Settings → Pages → Source = "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; cancel in-progress runs for newer pushes.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build
+        run: npm run build
+        env:
+          # Project Pages serve from /<repo>/. Change if you use a custom domain.
+          VITE_BASE: /pdf_to_md_app/
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
