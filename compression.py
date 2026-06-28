@@ -26,6 +26,15 @@ from PIL import Image
 
 logger = logging.getLogger("doc2md.compression")
 
+# Reject decompression-bomb images: cap the pixel count Pillow will decode.
+# A tiny file can claim enormous dimensions and exhaust RAM on open; 50 MP is
+# comfortably above any legitimate document image.
+Image.MAX_IMAGE_PIXELS = 50_000_000
+
+# Hard cap on the total *uncompressed* size of a DOCX archive. DOCX is a ZIP,
+# so a small "zip bomb" can inflate to gigabytes; halt before that exhausts RAM.
+_DOCX_MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024  # 200 MB
+
 # Ghostscript -dPDFSETTINGS presets, from smallest to largest output.
 _GS_PRESETS = {
     "screen": "/screen",    # 72 dpi  — smallest, lowest quality
@@ -66,6 +75,7 @@ def _compress_pdf_ghostscript(data: bytes, quality: str) -> bytes | None:
         src.write_bytes(data)
         cmd = [
             "gs",
+            "-dSAFER",  # sandbox: block arbitrary file read/write & shell escapes
             "-sDEVICE=pdfwrite",
             "-dCompatibilityLevel=1.4",
             f"-dPDFSETTINGS={preset}",
@@ -106,14 +116,23 @@ def compress_docx(data: bytes, quality: str = DEFAULT_QUALITY) -> bytes:
     jpeg_quality = _DOCX_JPEG_QUALITY.get(quality, _DOCX_JPEG_QUALITY[DEFAULT_QUALITY])
     out_buf = io.BytesIO()
 
+    total_uncompressed = 0
     with zipfile.ZipFile(io.BytesIO(data)) as src, zipfile.ZipFile(
         out_buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9
     ) as out:
-        for name in src.namelist():
-            raw = src.read(name)
-            if name.startswith("word/media/"):
+        for info in src.infolist():
+            # Zip-bomb guard: stop before the cumulative uncompressed size of the
+            # archive can exhaust memory. Checked before reading each member.
+            total_uncompressed += info.file_size
+            if total_uncompressed > _DOCX_MAX_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    "DOCX archive expands beyond the allowed size; refusing to process."
+                )
+
+            raw = src.read(info)
+            if info.filename.startswith("word/media/"):
                 raw = _recompress_image(raw, jpeg_quality) or raw
-            out.writestr(name, raw)
+            out.writestr(info.filename, raw)
 
     return out_buf.getvalue()
 
