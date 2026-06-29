@@ -8,6 +8,10 @@ and Content-Disposition header sanitization — plus basic round-trip behaviour.
 import io
 import zipfile
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
