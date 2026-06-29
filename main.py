@@ -67,6 +67,18 @@ app.add_middleware(
 _converter = MarkItDown()
 
 
+def _content_disposition(download_name: str) -> str:
+    """Build a safe ``Content-Disposition`` value for an attachment.
+
+    Guards against HTTP header/response injection: the raw name may contain
+    quotes or CR/LF. We emit a regex-sanitized ASCII ``filename`` plus a
+    percent-encoded RFC 6266 ``filename*`` for full-fidelity Unicode names.
+    """
+    ascii_fallback = re.sub(r"[^A-Za-z0-9._-]", "_", download_name) or "document"
+    encoded_name = quote(download_name, safe="")
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_name}"
+
+
 async def _read_upload(file: UploadFile, allowed: set[str]) -> tuple[bytes, str]:
     """Validate an upload and return its bytes and lower-cased extension.
 
@@ -178,20 +190,14 @@ async def compress_document(
 
     # Build the download filename from user input safely. The raw filename can
     # contain quotes, CR/LF, etc. — interpolating it into a header would allow
-    # HTTP header/response injection. We percent-encode it for the RFC 6266
-    # `filename*` field and pass a sanitized ASCII-only `filename` fallback.
+    # HTTP header/response injection.
     stem = Path(file.filename).stem
     download_name = f"{stem}-compressed{extension}"
-    ascii_fallback = re.sub(r"[^A-Za-z0-9._-]", "_", download_name) or f"document{extension}"
-    encoded_name = quote(download_name, safe="")
     return Response(
         content=compressed,
         media_type=media_type,
         headers={
-            "Content-Disposition": (
-                f'attachment; filename="{ascii_fallback}"; '
-                f"filename*=UTF-8''{encoded_name}"
-            ),
+            "Content-Disposition": _content_disposition(download_name),
             "X-Original-Size": str(len(content)),
             "X-Compressed-Size": str(len(compressed)),
         },
