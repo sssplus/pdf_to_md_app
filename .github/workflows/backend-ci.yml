@@ -41,3 +41,5 @@ jobs:
 
       - name: Run security smoke tests
         run: pytest -q
+        env:
+          PYTHONPATH: ${{ github.workspace }}
