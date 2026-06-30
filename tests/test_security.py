@@ -64,6 +64,54 @@ def test_ghostscript_command_uses_safer(monkeypatch):
     assert "-dSAFER" in captured["cmd"]
 
 
+# --- DPI hardcap + colour conversion override the preset ------------------
+
+def _capture_gs_cmd(monkeypatch, quality):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        out_path = next(a.split("=", 1)[1] for a in cmd if a.startswith("-sOutputFile="))
+        with open(out_path, "wb") as fh:
+            fh.write(b"%PDF-1.4\n%%EOF\n")
+
+        class _Result:
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(compression.subprocess, "run", fake_run)
+    compression._compress_pdf_ghostscript(b"%PDF-1.4\n%%EOF\n", quality)
+    return captured["cmd"]
+
+
+def test_ghostscript_forces_downsampling_and_rgb(monkeypatch):
+    cmd = _capture_gs_cmd(monkeypatch, "ebook")
+    # Downsampling is forced on for every image class, threshold dropped to 1.0
+    # so anything above target is always downsampled (preset default is 1.5).
+    assert "-dDownsampleColorImages=true" in cmd
+    assert "-dColorImageDownsampleThreshold=1.0" in cmd
+    assert "-dGrayImageDownsampleThreshold=1.0" in cmd
+    # CMYK is collapsed to RGB.
+    assert "-sColorConversionStrategy=RGB" in cmd
+    assert "-dConvertCMYKImagesToRGB=true" in cmd
+
+
+def test_ghostscript_resolution_tracks_quality(monkeypatch):
+    assert "-dColorImageResolution=72" in _capture_gs_cmd(monkeypatch, "screen")
+    assert "-dColorImageResolution=150" in _capture_gs_cmd(monkeypatch, "ebook")
+    assert "-dColorImageResolution=300" in _capture_gs_cmd(monkeypatch, "printer")
+
+
+def test_ghostscript_overrides_come_after_preset(monkeypatch):
+    # Ghostscript is last-wins for repeated params, so the explicit resolution
+    # flags only take effect if they appear after -dPDFSETTINGS on the line.
+    cmd = _capture_gs_cmd(monkeypatch, "ebook")
+    preset_idx = cmd.index("-dPDFSETTINGS=/ebook")
+    res_idx = cmd.index("-dColorImageResolution=150")
+    assert preset_idx < res_idx
+
+
 # --- Guard 3: DOCX zip-bomb cap -------------------------------------------
 
 def test_docx_zip_bomb_is_rejected(monkeypatch):

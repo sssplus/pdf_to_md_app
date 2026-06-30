@@ -59,6 +59,21 @@ _GS_PRESETS = {
     "printer": "/printer",  # 300 dpi — high quality
 }
 
+# Target resolution (dpi) for colour/greyscale images, per quality. We set
+# these *explicitly* rather than trusting the -dPDFSETTINGS preset, because a
+# preset only supplies *defaults* and pairs them with a 1.5x downsample
+# threshold — so an image merely below 1.5x the target (e.g. a 200 dpi scan
+# under /ebook's 150 dpi target) is left completely untouched, which is the
+# main reason results were inconsistent. Pinning the resolution and forcing
+# the threshold to 1.0 (see _compress_pdf_ghostscript) makes any image above
+# the target downsample, every time.
+_GS_COLOR_DPI = {"screen": 72, "ebook": 150, "printer": 300}
+
+# Bilevel (1-bit) images stay high: text/line-art scans compress extremely
+# well at 1-bit and look terrible if downsampled to photo resolutions, so we
+# don't drop these to 72/150.
+_GS_MONO_DPI = {"screen": 300, "ebook": 300, "printer": 300}
+
 # JPEG quality used when re-encoding images inside a DOCX, per preset.
 _DOCX_JPEG_QUALITY = {"screen": 60, "ebook": 75, "printer": 85}
 
@@ -109,6 +124,39 @@ def compress_pdf(data: bytes, quality: str = DEFAULT_QUALITY) -> bytes:
     return _compress_pdf_pikepdf(data)
 
 
+def _gs_downsample_flags(quality: str) -> list[str]:
+    """Explicit image-downsampling + colour flags that override the preset.
+
+    These MUST appear *after* ``-dPDFSETTINGS`` on the command line so they win
+    over the preset's defaults (Ghostscript is last-wins for repeated params).
+
+    - Force downsampling on for all three image classes and pin the target
+      resolution to the chosen quality, with a 1.0 threshold so *anything*
+      above target is downsampled (the preset's 1.5x threshold let many
+      images through unchanged).
+    - Force CMYK → RGB so documents that accidentally carry heavy CMYK image
+      data collapse to three channels. Greyscale is deliberately *not* forced;
+      it is too visually destructive to apply blindly.
+    """
+    color_dpi = _GS_COLOR_DPI.get(quality, _GS_COLOR_DPI[DEFAULT_QUALITY])
+    mono_dpi = _GS_MONO_DPI.get(quality, _GS_MONO_DPI[DEFAULT_QUALITY])
+    return [
+        "-dDownsampleColorImages=true",
+        "-dDownsampleGrayImages=true",
+        "-dDownsampleMonoImages=true",
+        f"-dColorImageResolution={color_dpi}",
+        f"-dGrayImageResolution={color_dpi}",
+        f"-dMonoImageResolution={mono_dpi}",
+        "-dColorImageDownsampleThreshold=1.0",
+        "-dGrayImageDownsampleThreshold=1.0",
+        "-dMonoImageDownsampleThreshold=1.0",
+        "-dColorImageDownsampleType=/Bicubic",
+        "-dGrayImageDownsampleType=/Bicubic",
+        "-sColorConversionStrategy=RGB",
+        "-dConvertCMYKImagesToRGB=true",
+    ]
+
+
 def _compress_pdf_ghostscript(data: bytes, quality: str) -> bytes | None:
     """Compress with Ghostscript. Returns ``None`` if it is unavailable/fails."""
     preset = _GS_PRESETS.get(quality, _GS_PRESETS[DEFAULT_QUALITY])
@@ -122,6 +170,8 @@ def _compress_pdf_ghostscript(data: bytes, quality: str) -> bytes | None:
             "-sDEVICE=pdfwrite",
             "-dCompatibilityLevel=1.4",
             f"-dPDFSETTINGS={preset}",
+            # Override the preset's image defaults for consistent downsampling.
+            *_gs_downsample_flags(quality),
             "-dNOPAUSE",
             "-dBATCH",
             "-dQUIET",
