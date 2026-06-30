@@ -7,11 +7,10 @@ import './App.css';
 // Base URL of the backend API. Configurable at build time via VITE_API_URL.
 const API_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:8000').replace(/\/$/, '');
 
-// Accepted file types per mode. Convert also handles legacy .doc; compress does
-// not (the old binary format cannot be meaningfully recompressed).
+// Accepted file types per mode. Legacy binary .doc is not supported by
+// either mode: the backend's markitdown install has no converter for it.
 const CONVERT_ACCEPT = {
   'application/pdf': ['.pdf'],
-  'application/msword': ['.doc'],
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
 };
 const COMPRESS_ACCEPT = {
@@ -88,6 +87,13 @@ export default function App() {
     formData.append('file', selected);
     const response = await fetch(`${API_URL}/api/convert`, { method: 'POST', body: formData });
     if (!response.ok) throw await errorFromResponse(response, 'Failed to convert the document.');
+    // A 200 with an unexpected Content-Type (e.g. an HTML page from a proxy/
+    // CDN/WAF in front of the API) is not real markdown — fail loudly instead
+    // of rendering it as if it were.
+    const contentType = response.headers.get('Content-Type') || '';
+    if (!contentType.includes('text/markdown') && !contentType.includes('text/plain')) {
+      throw new Error('The server returned an unexpected response. Please try again.');
+    }
     setMarkdown(await response.text());
   }, []);
 
@@ -114,9 +120,7 @@ export default function App() {
   const onDrop = useCallback(async (acceptedFiles, fileRejections) => {
     clearResults();
     if (fileRejections.length > 0) {
-      setError(mode === 'compress'
-        ? 'Unsupported file type. Please upload a PDF or DOCX file.'
-        : 'Unsupported file type. Please upload a PDF, DOC, or DOCX file.');
+      setError('Unsupported file type. Please upload a PDF or DOCX file.');
       return;
     }
     if (acceptedFiles.length === 0) return;
@@ -171,7 +175,7 @@ export default function App() {
     ? Math.round((1 - compressed.compressedSize / compressed.originalSize) * 100)
     : 0;
 
-  const supportedHint = mode === 'compress' ? '.pdf, .docx' : '.pdf, .doc, .docx';
+  const supportedHint = '.pdf, .docx';
 
   return (
     <div className="app">

@@ -2,7 +2,7 @@
   "name": "doc2md-app",
   "private": true,
   "version": "1.0.0",
-  "description": "Convert PDF, DOC, and DOCX files to clean Markdown in the browser.",
+  "description": "Convert PDF and DOCX files to clean Markdown in the browser.",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {

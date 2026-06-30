@@ -1,6 +1,6 @@
 ---
 name: run-pdf-to-md-app
-description: Build, launch, and drive the Doc2MD app (pdf_to_md_app) — a React + FastAPI tool that converts PDF/DOC/DOCX files to Markdown and compresses PDF/DOCX files. Use when asked to run, start, serve, build, smoke-test, screenshot, or verify the Doc2MD converter/compressor, its frontend, or its backend API.
+description: Build, launch, and drive the Doc2MD app (pdf_to_md_app) — a React + FastAPI tool that converts PDF/DOCX files to Markdown and compresses PDF/DOCX files. Use when asked to run, start, serve, build, smoke-test, screenshot, or verify the Doc2MD converter/compressor, its frontend, or its backend API.
 ---
 
 # Run Doc2MD (pdf_to_md_app)
@@ -119,7 +119,7 @@ node .claude/skills/run-pdf-to-md-app/driver.mjs \
 **Look at `/tmp/doc2md-shots/2-preview.png`** (convert) — the `sample.md` card
 with rendered headings — and `2-compress.png` (compress) — the result card with
 a "% smaller" figure and original→compressed sizes. Pass any
-`.pdf`/`.doc`/`.docx` (convert) or `.pdf`/`.docx` (compress) as the first arg.
+`.pdf`/`.docx` (convert or compress) as the first arg.
 
 Stop the dev server with `kill $(cat /tmp/doc2md-frontend.pid)`.
 
