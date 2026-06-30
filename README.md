@@ -1,6 +1,6 @@
 # Doc2MD
 
-> Convert **PDF / DOC / DOCX** to clean **Markdown**, or **compress** PDF and
+> Convert **PDF / DOCX** to clean **Markdown**, or **compress** PDF and
 > Word files — drag, drop, done.
 
 Doc2MD is a small full-stack app with a React frontend and a FastAPI backend. It
@@ -12,7 +12,7 @@ shrinks PDF/DOCX files with Ghostscript and Pillow.
 
 ## Features
 
-- 🗂️ **Drag & drop** upload (PDF, DOC, DOCX)
+- 🗂️ **Drag & drop** upload (PDF, DOCX)
 - 🔄 **Convert** documents to Markdown — **live preview** + **raw** view
 - 🗜️ **Compress** PDF and DOCX files with selectable quality, showing how much
   smaller the result is
@@ -84,7 +84,7 @@ Open <http://localhost:5173>, drop in a document, and watch it convert.
 
 ### `POST /api/convert`
 
-Multipart form upload with a single `file` field (`.pdf`, `.doc`, `.docx`).
+Multipart form upload with a single `file` field (`.pdf`, `.docx`).
 Returns the converted Markdown as `text/markdown`.
 
 ```bash

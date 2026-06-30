@@ -80,6 +80,29 @@ def test_normal_docx_is_not_rejected():
     assert zipfile.ZipFile(io.BytesIO(out)).testzip() is None
 
 
+def test_docx_zip_bomb_is_rejected_via_bounded_streaming_read(monkeypatch):
+    # _read_entry_bounded enforces the cap against bytes actually produced by
+    # streaming decompression (checked every chunk), rather than buffering an
+    # entry fully into memory via one unbounded read() before any check can
+    # apply to it. A multi-chunk entry that crosses the budget partway through
+    # must still abort instead of completing the read.
+    monkeypatch.setattr(compression, "_DOCX_MAX_UNCOMPRESSED_BYTES", 1_000)
+    monkeypatch.setattr(compression, "_DOCX_READ_CHUNK_BYTES", 256)
+    bomb = _make_docx({"word/big.bin": b"\0" * 5_000})
+    with pytest.raises(ValueError):
+        compression.compress_docx(bomb)
+
+
+def test_compress_endpoint_reports_413_on_docx_zip_bomb(monkeypatch):
+    monkeypatch.setattr(compression, "_DOCX_MAX_UNCOMPRESSED_BYTES", 1_000)
+    bomb = _make_docx({"word/big.bin": b"\0" * 5_000})
+    resp = client.post(
+        "/api/compress",
+        files={"file": ("bomb.docx", bomb, DOCX_MEDIA_TYPE)},
+    )
+    assert resp.status_code == 413
+
+
 # --- Guard 4: Content-Disposition header sanitization ---------------------
 
 def test_content_disposition_blocks_crlf_and_quote_injection():
@@ -158,3 +181,77 @@ def test_compress_endpoint_reports_504_on_ghostscript_timeout(monkeypatch):
     )
     assert resp.status_code == 504
     assert "timed out" in resp.json()["detail"].lower()
+
+
+# --- DOCX compression wall-clock timeout ------------------------------------
+
+def test_docx_compression_timeout_raises_distinct_exception(monkeypatch):
+    # A negative budget puts the deadline in the past before the first entry
+    # is even read, so the loop's first check trips deterministically.
+    monkeypatch.setattr(compression, "_DOCX_TIMEOUT_SECONDS", -1)
+    with pytest.raises(compression.DocxCompressionTimeout):
+        compression.compress_docx(_make_docx())
+
+
+def test_compress_endpoint_reports_504_on_docx_timeout(monkeypatch):
+    def fake_compress_docx(data, quality):
+        raise compression.DocxCompressionTimeout("boom")
+
+    monkeypatch.setattr(main.compression, "compress_docx", fake_compress_docx)
+    resp = client.post(
+        "/api/compress",
+        files={"file": ("big.docx", _make_docx(), DOCX_MEDIA_TYPE)},
+    )
+    assert resp.status_code == 504
+    assert "timed out" in resp.json()["detail"].lower()
+
+
+# --- Legacy .doc is rejected by both endpoints ------------------------------
+
+def test_convert_rejects_legacy_doc():
+    resp = client.post(
+        "/api/convert", files={"file": ("old.doc", _make_docx(), "application/msword")}
+    )
+    assert resp.status_code == 415
+
+
+# --- Upload size is enforced while streaming, not after full buffering -----
+
+def test_convert_rejects_oversized_upload_mid_stream(monkeypatch):
+    monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 10)
+    oversized = b"%PDF-1.4\n" + b"A" * 1_000 + b"\n%%EOF\n"
+    resp = client.post(
+        "/api/convert", files={"file": ("big.pdf", oversized, "application/pdf")}
+    )
+    assert resp.status_code == 413
+
+
+# --- Blocking work is offloaded off the event loop --------------------------
+
+def test_convert_offloads_blocking_work_to_threadpool(monkeypatch):
+    calls = []
+
+    async def fake_run_in_threadpool(func, *args):
+        calls.append(func)
+        return func(*args)
+
+    monkeypatch.setattr(main, "run_in_threadpool", fake_run_in_threadpool)
+    client.post(
+        "/api/convert", files={"file": ("a.docx", _make_docx(), DOCX_MEDIA_TYPE)}
+    )
+    assert calls, "convert should run the blocking parse via run_in_threadpool"
+
+
+def test_compress_offloads_blocking_work_to_threadpool(monkeypatch):
+    calls = []
+
+    async def fake_run_in_threadpool(func, *args):
+        calls.append(func)
+        return func(*args)
+
+    monkeypatch.setattr(main, "run_in_threadpool", fake_run_in_threadpool)
+    resp = client.post(
+        "/api/compress", files={"file": ("a.docx", _make_docx(), DOCX_MEDIA_TYPE)}
+    )
+    assert calls, "compress should run the blocking work via run_in_threadpool"
+    assert resp.status_code == 200

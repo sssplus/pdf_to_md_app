@@ -1,6 +1,6 @@
 """Doc2MD Converter API.
 
-A small FastAPI service that converts uploaded PDF, DOC, and DOCX files to
+A small FastAPI service that converts uploaded PDF and DOCX files to
 Markdown using Microsoft's `markitdown` library, and compresses PDF and DOCX
 files.
 """
@@ -14,6 +14,7 @@ from urllib.parse import quote
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 from markitdown import MarkItDown
@@ -23,8 +24,11 @@ import compression
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("doc2md")
 
-# Extensions accepted by /api/convert.
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc"}
+# Extensions accepted by /api/convert. Legacy binary .doc is intentionally
+# excluded: the installed markitdown[pdf,docx] extras register no converter
+# for it (only modern OOXML .docx), so every .doc upload would otherwise
+# pass validation and then always fail conversion with an opaque 500.
+ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 
 # Extensions accepted by /api/compress (the legacy binary .doc format cannot be
 # meaningfully recompressed, so it is excluded).
@@ -49,7 +53,7 @@ ALLOWED_ORIGINS = [
 
 app = FastAPI(
     title="Doc2MD Converter API",
-    description="Converts PDF, DOC, and DOCX files to Markdown using markitdown.",
+    description="Converts PDF and DOCX files to Markdown using markitdown.",
     version="1.0.0",
 )
 
@@ -79,11 +83,19 @@ def _content_disposition(download_name: str) -> str:
     return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_name}"
 
 
+# Chunk size for streaming an upload off the wire. Bounds peak memory to
+# roughly MAX_UPLOAD_BYTES (the check below aborts as soon as the running
+# total crosses it) instead of buffering an unbounded body in full first.
+_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024  # 1 MB
+
+
 async def _read_upload(file: UploadFile, allowed: set[str]) -> tuple[bytes, str]:
     """Validate an upload and return its bytes and lower-cased extension.
 
     Raises ``HTTPException`` for a missing/empty file, an unsupported
-    extension, or content exceeding ``MAX_UPLOAD_BYTES``.
+    extension, or content exceeding ``MAX_UPLOAD_BYTES``. Reads the body in
+    bounded chunks so an oversized upload is rejected as soon as it crosses
+    the limit rather than being fully materialized in memory first.
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file was uploaded.")
@@ -96,16 +108,24 @@ async def _read_upload(file: UploadFile, allowed: set[str]) -> tuple[bytes, str]
             f"Allowed types: {', '.join(sorted(allowed))}.",
         )
 
-    content = await file.read()
-    if not content:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File is too large. Maximum size is "
+                f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+            )
+        chunks.append(chunk)
+
+    if not chunks:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File is too large. Maximum size is "
-            f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
-        )
-    return content, extension
+    return b"".join(chunks), extension
 
 
 @app.get("/", tags=["meta"])
@@ -129,7 +149,7 @@ async def health():
 
 @app.post("/api/convert", response_class=PlainTextResponse, tags=["convert"])
 async def convert_document_to_markdown(file: UploadFile = File(...)):
-    """Convert an uploaded PDF, DOC, or DOCX file to Markdown."""
+    """Convert an uploaded PDF or DOCX file to Markdown."""
     content, extension = await _read_upload(file, ALLOWED_EXTENSIONS)
 
     tmp_path: Path | None = None
@@ -138,7 +158,10 @@ async def convert_document_to_markdown(file: UploadFile = File(...)):
             tmp_file.write(content)
             tmp_path = Path(tmp_file.name)
 
-        result = _converter.convert(str(tmp_path))
+        # markitdown's convert() is a blocking, synchronous parse — run it off
+        # the event loop so one slow/large document doesn't stall every other
+        # in-flight request (including the /health liveness probe).
+        result = await run_in_threadpool(_converter.convert, str(tmp_path))
         return PlainTextResponse(
             content=result.text_content, media_type="text/markdown"
         )
@@ -171,19 +194,27 @@ async def compress_document(
     content, extension = await _read_upload(file, COMPRESSIBLE_EXTENSIONS)
 
     try:
+        # Ghostscript/zipfile/Pillow are all blocking — run off the event loop
+        # so one slow/large file doesn't stall every other in-flight request.
         if extension == ".pdf":
-            compressed = compression.compress_pdf(content, quality)
+            compressed = await run_in_threadpool(compression.compress_pdf, content, quality)
             media_type = "application/pdf"
         else:  # .docx
-            compressed = compression.compress_docx(content, quality)
+            compressed = await run_in_threadpool(compression.compress_docx, content, quality)
             media_type = _DOCX_MEDIA_TYPE
-    except compression.GhostscriptTimeout:
-        logger.warning("Ghostscript timed out compressing %s", file.filename)
+    except (compression.GhostscriptTimeout, compression.DocxCompressionTimeout):
+        logger.warning("Compression timed out for %s", file.filename)
         raise HTTPException(
             status_code=504,
             detail="Compression timed out for this file. Try a smaller file or "
             "the 'Smaller file' quality setting.",
         )
+    except ValueError as exc:
+        # Raised by the DOCX zip-bomb guard — a deliberate size-policy
+        # rejection, not a corrupt/unsupported file, so it gets its own
+        # actionable status instead of the generic 500 below.
+        logger.warning("Rejected %s: %s", file.filename, exc)
+        raise HTTPException(status_code=413, detail=str(exc))
     except Exception:
         logger.exception("Failed to compress %s", file.filename)
         raise HTTPException(
