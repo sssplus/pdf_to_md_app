@@ -59,6 +59,13 @@ _GS_PRESETS = {
     "printer": "/printer",  # 300 dpi — high quality
 }
 
+# Hard DPI cap per preset. The presets above only *suggest* these resolutions
+# and, by default, skip downsampling unless an image is well above target
+# (threshold 1.5). We restate the resolution explicitly and drop the threshold
+# to 1.0 so any image above target is actually downsampled — this is what makes
+# high-resolution scans shrink predictably instead of "sometimes".
+_GS_DPI = {"screen": 72, "ebook": 150, "printer": 300}
+
 # JPEG quality used when re-encoding images inside a DOCX, per preset.
 _DOCX_JPEG_QUALITY = {"screen": 60, "ebook": 75, "printer": 85}
 
@@ -109,9 +116,39 @@ def compress_pdf(data: bytes, quality: str = DEFAULT_QUALITY) -> bytes:
     return _compress_pdf_pikepdf(data)
 
 
+def _gs_downsample_flags(dpi: int) -> list[str]:
+    """Force colour and grayscale images down to ``dpi`` (threshold 1.0).
+
+    Mono (1-bit) images are left to the preset so scanned text stays legible.
+    """
+    return [
+        "-dDownsampleColorImages=true",
+        "-dColorImageDownsampleType=/Bicubic",
+        f"-dColorImageResolution={dpi}",
+        "-dColorImageDownsampleThreshold=1.0",
+        "-dDownsampleGrayImages=true",
+        "-dGrayImageDownsampleType=/Bicubic",
+        f"-dGrayImageResolution={dpi}",
+        "-dGrayImageDownsampleThreshold=1.0",
+    ]
+
+
+def _gs_color_flags(quality: str) -> list[str]:
+    """Convert CMYK to RGB for the web-facing presets to crush colour size.
+
+    The ``printer`` preset preserves the original colour space for print
+    fidelity; ``screen``/``ebook`` target screens, where RGB is both smaller
+    (3 channels vs 4) and correct.
+    """
+    if quality == "printer":
+        return []
+    return ["-sColorConversionStrategy=RGB", "-dConvertCMYKImagesToRGB=true"]
+
+
 def _compress_pdf_ghostscript(data: bytes, quality: str) -> bytes | None:
     """Compress with Ghostscript. Returns ``None`` if it is unavailable/fails."""
     preset = _GS_PRESETS.get(quality, _GS_PRESETS[DEFAULT_QUALITY])
+    dpi = _GS_DPI.get(quality, _GS_DPI[DEFAULT_QUALITY])
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "in.pdf"
         dst = Path(tmp) / "out.pdf"
@@ -126,6 +163,10 @@ def _compress_pdf_ghostscript(data: bytes, quality: str) -> bytes | None:
             "-dBATCH",
             "-dQUIET",
             "-dDetectDuplicateImages=true",
+            # Explicit image handling (overrides the preset's softer defaults)
+            # for consistent, predictable size reduction.
+            *_gs_downsample_flags(dpi),
+            *_gs_color_flags(quality),
             f"-sOutputFile={dst}",
             str(src),
         ]
