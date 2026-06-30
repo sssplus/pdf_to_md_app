@@ -177,6 +177,13 @@ async def compress_document(
         else:  # .docx
             compressed = compression.compress_docx(content, quality)
             media_type = _DOCX_MEDIA_TYPE
+    except compression.GhostscriptTimeout:
+        logger.warning("Ghostscript timed out compressing %s", file.filename)
+        raise HTTPException(
+            status_code=504,
+            detail="Compression timed out for this file. Try a smaller file or "
+            "the 'Smaller file' quality setting.",
+        )
     except Exception:
         logger.exception("Failed to compress %s", file.filename)
         raise HTTPException(

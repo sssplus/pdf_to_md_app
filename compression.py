@@ -50,6 +50,24 @@ _DOCX_IMAGE_MAX_EDGE = 1600
 
 DEFAULT_QUALITY = "ebook"
 
+# Ghostscript wall-clock budget. Free-tier hosts (e.g. Render) enforce their
+# own hard proxy timeout (~100s) that the app cannot extend, so this must
+# leave headroom for upload + response time within that window rather than
+# the generous 120s used previously — a run that hits *that* timeout would
+# already lose the race against the platform silently dropping the
+# connection (the client sees a bare network error, never our response).
+_GS_TIMEOUT_SECONDS = 75
+
+
+class GhostscriptTimeout(Exception):
+    """Raised when Ghostscript exceeds ``_GS_TIMEOUT_SECONDS`` on a PDF.
+
+    Kept distinct from "Ghostscript unavailable/crashed" so the caller can
+    report an honest timeout instead of silently swapping in the
+    quality-blind pikepdf fallback, which would otherwise make the chosen
+    ``quality`` look like it had no effect.
+    """
+
 
 def ghostscript_available() -> bool:
     """Return ``True`` if the Ghostscript ``gs`` binary is on PATH."""
@@ -57,7 +75,11 @@ def ghostscript_available() -> bool:
 
 
 def compress_pdf(data: bytes, quality: str = DEFAULT_QUALITY) -> bytes:
-    """Compress a PDF, preferring Ghostscript and falling back to pikepdf."""
+    """Compress a PDF, preferring Ghostscript and falling back to pikepdf.
+
+    Raises ``GhostscriptTimeout`` if Ghostscript exceeds its time budget —
+    callers should report that as a timeout, not silently fall back.
+    """
     if ghostscript_available():
         compressed = _compress_pdf_ghostscript(data, quality)
         if compressed is not None:
@@ -87,7 +109,11 @@ def _compress_pdf_ghostscript(data: bytes, quality: str) -> bytes | None:
             str(src),
         ]
         try:
-            subprocess.run(cmd, check=True, timeout=120, capture_output=True)
+            subprocess.run(cmd, check=True, timeout=_GS_TIMEOUT_SECONDS, capture_output=True)
+        except subprocess.TimeoutExpired as exc:
+            raise GhostscriptTimeout(
+                f"Ghostscript exceeded the {_GS_TIMEOUT_SECONDS}s budget"
+            ) from exc
         except (subprocess.SubprocessError, OSError) as exc:
             logger.warning("Ghostscript invocation failed: %s", exc)
             return None

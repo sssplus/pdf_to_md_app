@@ -132,3 +132,29 @@ def test_compress_never_returns_larger_than_input():
     )
     assert resp.status_code == 200
     assert int(resp.headers["x-compressed-size"]) <= int(resp.headers["x-original-size"])
+
+
+# --- Ghostscript timeout reporting -----------------------------------------
+
+def test_ghostscript_timeout_raises_distinct_exception(monkeypatch):
+    import subprocess as sp
+
+    def fake_run(cmd, **kwargs):
+        raise sp.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+    monkeypatch.setattr(compression.subprocess, "run", fake_run)
+    with pytest.raises(compression.GhostscriptTimeout):
+        compression._compress_pdf_ghostscript(b"%PDF-1.4\n%%EOF\n", "ebook")
+
+
+def test_compress_endpoint_reports_504_on_ghostscript_timeout(monkeypatch):
+    def fake_compress_pdf(data, quality):
+        raise compression.GhostscriptTimeout("boom")
+
+    monkeypatch.setattr(main.compression, "compress_pdf", fake_compress_pdf)
+    resp = client.post(
+        "/api/compress",
+        files={"file": ("big.pdf", b"%PDF-1.4\n%%EOF\n", "application/pdf")},
+    )
+    assert resp.status_code == 504
+    assert "timed out" in resp.json()["detail"].lower()
