@@ -2,13 +2,15 @@ name: Backend CI
 
 # Smoke-tests the backend security guards (Ghostscript sandbox, DOCX zip-bomb
 # cap, Pillow pixel cap, Content-Disposition sanitization) plus endpoint
-# regressions, on every PR and push that touches the backend.
+# regressions (convert, compress, merge), on every PR and push that touches
+# the backend.
 
 on:
   pull_request:
     paths:
       - "main.py"
       - "compression.py"
+      - "merging.py"
       - "requirements*.txt"
       - "tests/**"
       - ".github/workflows/backend-ci.yml"
@@ -17,6 +19,7 @@ on:
     paths:
       - "main.py"
       - "compression.py"
+      - "merging.py"
       - "requirements*.txt"
       - "tests/**"
       - ".github/workflows/backend-ci.yml"

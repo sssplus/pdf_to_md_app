@@ -8,7 +8,7 @@ import './App.css';
 const API_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:8000').replace(/\/$/, '');
 
 // Accepted file types per mode. Legacy binary .doc is not supported by
-// either mode: the backend's markitdown install has no converter for it.
+// any mode: the backend's markitdown install has no converter for it.
 const CONVERT_ACCEPT = {
   'application/pdf': ['.pdf'],
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
@@ -16,6 +16,9 @@ const CONVERT_ACCEPT = {
 const COMPRESS_ACCEPT = {
   'application/pdf': ['.pdf'],
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+};
+const MERGE_ACCEPT = {
+  'application/pdf': ['.pdf'],
 };
 
 const QUALITY_OPTIONS = [
@@ -45,7 +48,7 @@ function formatBytes(bytes) {
 }
 
 export default function App() {
-  const [mode, setMode] = useState('convert'); // 'convert' | 'compress'
+  const [mode, setMode] = useState('convert'); // 'convert' | 'compress' | 'merge'
   const [file, setFile] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
@@ -59,22 +62,35 @@ export default function App() {
   const [quality, setQuality] = useState('ebook');
   const [compressed, setCompressed] = useState(null); // { url, name, originalSize, compressedSize }
 
+  // Merge state
+  const [mergeFiles, setMergeFiles] = useState([]); // File[], in merge order
+  const [merged, setMerged] = useState(null); // { url, name, fileCount }
+
   const clearResults = useCallback(() => {
     setError('');
     setMarkdown('');
     setShowRaw(false);
     setCopied(false);
     setFile(null);
+    setMergeFiles([]);
     setCompressed((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+    setMerged((prev) => {
       if (prev) URL.revokeObjectURL(prev.url);
       return null;
     });
   }, []);
 
-  // Revoke any outstanding object URL when the component unmounts.
+  // Revoke any outstanding object URLs when the component unmounts.
   useEffect(() => () => {
     if (compressed) URL.revokeObjectURL(compressed.url);
   }, [compressed]);
+
+  useEffect(() => () => {
+    if (merged) URL.revokeObjectURL(merged.url);
+  }, [merged]);
 
   const switchMode = useCallback((next) => {
     if (next === mode) return;
@@ -117,7 +133,61 @@ export default function App() {
     });
   }, [quality]);
 
+  const addMergeFiles = useCallback((selected, fileRejections) => {
+    setMerged((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+    if (fileRejections.length > 0) {
+      setError('Unsupported file type. Please upload PDF files only.');
+    } else {
+      setError('');
+    }
+    if (selected.length > 0) {
+      setMergeFiles((prev) => [...prev, ...selected]);
+    }
+  }, []);
+
+  const removeMergeFile = useCallback((index) => {
+    setMergeFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const moveMergeFile = useCallback((index, direction) => {
+    setMergeFiles((prev) => {
+      const target = index + direction;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }, []);
+
+  const handleMerge = useCallback(async () => {
+    if (mergeFiles.length < 2) return;
+    setError('');
+    setIsProcessing(true);
+    try {
+      const formData = new FormData();
+      mergeFiles.forEach((f) => formData.append('files', f));
+      const response = await fetch(`${API_URL}/api/merge`, { method: 'POST', body: formData });
+      if (!response.ok) throw await errorFromResponse(response, 'Failed to merge the PDFs.');
+      const blob = await response.blob();
+      setMerged({ url: URL.createObjectURL(blob), name: 'merged.pdf', fileCount: mergeFiles.length });
+    } catch (err) {
+      setError(err instanceof TypeError
+        ? 'Could not reach the server. Is the backend running?'
+        : err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [mergeFiles]);
+
   const onDrop = useCallback(async (acceptedFiles, fileRejections) => {
+    if (mode === 'merge') {
+      addMergeFiles(acceptedFiles, fileRejections);
+      return;
+    }
+
     clearResults();
     if (fileRejections.length > 0) {
       setError('Unsupported file type. Please upload a PDF or DOCX file.');
@@ -138,12 +208,12 @@ export default function App() {
     } finally {
       setIsProcessing(false);
     }
-  }, [mode, clearResults, compress, convert]);
+  }, [mode, clearResults, compress, convert, addMergeFiles]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: mode === 'compress' ? COMPRESS_ACCEPT : CONVERT_ACCEPT,
-    multiple: false,
+    accept: mode === 'compress' ? COMPRESS_ACCEPT : mode === 'merge' ? MERGE_ACCEPT : CONVERT_ACCEPT,
+    multiple: mode === 'merge',
     disabled: isProcessing,
   });
 
@@ -175,18 +245,22 @@ export default function App() {
     ? Math.round((1 - compressed.compressedSize / compressed.originalSize) * 100)
     : 0;
 
-  const supportedHint = '.pdf, .docx';
+  const supportedHint = mode === 'merge' ? '.pdf (select two or more)' : '.pdf, .docx';
 
   return (
     <div className="app">
       <header className="app-header">
         <h1>Doc2MD</h1>
-        <p className="tagline">Convert documents to Markdown, or shrink PDF and Word files.</p>
+        <p className="tagline">Convert documents to Markdown, shrink PDF and Word files, or merge PDFs.</p>
       </header>
 
       <main className="app-main">
         <div className="mode-switch" role="tablist" aria-label="Mode">
-          {[['convert', 'Convert to Markdown'], ['compress', 'Compress file']].map(([value, label]) => (
+          {[
+            ['convert', 'Convert to Markdown'],
+            ['compress', 'Compress file'],
+            ['merge', 'Merge PDFs'],
+          ].map(([value, label]) => (
             <button
               key={value}
               type="button"
@@ -221,10 +295,19 @@ export default function App() {
             <path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
           </svg>
           {isDragActive ? (
-            <p>Drop the file to {mode === 'compress' ? 'compress' : 'convert'} it…</p>
+            <p>
+              Drop the file{mode === 'merge' ? 's' : ''} to{' '}
+              {mode === 'compress' ? 'compress' : mode === 'merge' ? 'add' : 'convert'} it…
+            </p>
+          ) : mode === 'merge' ? (
+            <p>
+              <strong>Drag &amp; drop</strong> PDF files here,
+              <br />
+              or click to browse
+            </p>
           ) : (
             <p>
-              <strong>Drag &amp; drop</strong> a {mode === 'compress' ? 'PDF or Word' : 'PDF or Word'} document here,
+              <strong>Drag &amp; drop</strong> a PDF or Word document here,
               <br />
               or click to browse
             </p>
@@ -235,7 +318,11 @@ export default function App() {
         {isProcessing && (
           <div className="status" role="status">
             <div className="loader" aria-hidden="true" />
-            <span>{mode === 'compress' ? 'Compressing' : 'Converting'} {file?.name}…</span>
+            <span>
+              {mode === 'compress' && `Compressing ${file?.name}…`}
+              {mode === 'convert' && `Converting ${file?.name}…`}
+              {mode === 'merge' && `Merging ${mergeFiles.length} files…`}
+            </span>
           </div>
         )}
 
@@ -287,6 +374,54 @@ export default function App() {
             <div className="result-actions">
               <button type="button" className="btn btn-primary" onClick={handleDownloadCompressed}>
                 Download compressed file
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={clearResults}>Clear</button>
+            </div>
+          </section>
+        )}
+
+        {/* Merge queue */}
+        {mode === 'merge' && mergeFiles.length > 0 && !merged && !isProcessing && (
+          <section className="merge-queue" aria-label="Files to merge">
+            <ul className="merge-list">
+              {mergeFiles.map((f, i) => (
+                <li key={`${f.name}-${i}`} className="merge-list-item">
+                  <span className="merge-file-index">{i + 1}</span>
+                  <span className="merge-file-name">{f.name}</span>
+                  <span className="file-meta">{formatBytes(f.size)}</span>
+                  <div className="merge-file-actions">
+                    <button type="button" className="btn-icon" onClick={() => moveMergeFile(i, -1)}
+                      disabled={i === 0} aria-label={`Move ${f.name} up`}>↑</button>
+                    <button type="button" className="btn-icon" onClick={() => moveMergeFile(i, 1)}
+                      disabled={i === mergeFiles.length - 1} aria-label={`Move ${f.name} down`}>↓</button>
+                    <button type="button" className="btn-icon" onClick={() => removeMergeFile(i)}
+                      aria-label={`Remove ${f.name}`}>✕</button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {mergeFiles.length < 2 && (
+              <p className="merge-hint">Add at least one more PDF to merge.</p>
+            )}
+            <div className="result-actions">
+              <button type="button" className="btn btn-primary" onClick={handleMerge}
+                disabled={mergeFiles.length < 2}>
+                Merge {mergeFiles.length} files
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={clearResults}>Clear</button>
+            </div>
+          </section>
+        )}
+
+        {/* Merge result */}
+        {merged && !isProcessing && (
+          <section className="result-card" aria-label="Merge result">
+            <h2>{merged.name}</h2>
+            <p className="savings"><strong>{merged.fileCount} files combined</strong></p>
+            <div className="result-actions">
+              <button type="button" className="btn btn-primary"
+                onClick={() => triggerDownload(merged.url, merged.name, false)}>
+                Download merged PDF
               </button>
               <button type="button" className="btn btn-ghost" onClick={clearResults}>Clear</button>
             </div>
