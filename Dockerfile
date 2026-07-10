@@ -15,7 +15,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Application code.
-COPY main.py compression.py ./
+COPY main.py compression.py merging.py ./
 
 # Bind all interfaces inside the container. Most hosts inject $PORT, which
 # main.py reads; default to 8000 for local `docker run`.
