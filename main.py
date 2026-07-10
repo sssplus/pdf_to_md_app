@@ -20,6 +20,7 @@ from fastapi.responses import PlainTextResponse, Response
 from markitdown import MarkItDown
 
 import compression
+import merging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("doc2md")
@@ -33,6 +34,9 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 # Extensions accepted by /api/compress (the legacy binary .doc format cannot be
 # meaningfully recompressed, so it is excluded).
 COMPRESSIBLE_EXTENSIONS = {".pdf", ".docx"}
+
+# Extensions accepted by /api/merge — PDF only.
+MERGEABLE_EXTENSIONS = {".pdf"}
 
 _DOCX_MEDIA_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -135,8 +139,10 @@ async def root():
         "service": "Doc2MD Converter API",
         "convert_endpoint": "/api/convert",
         "compress_endpoint": "/api/compress",
+        "merge_endpoint": "/api/merge",
         "convert_extensions": sorted(ALLOWED_EXTENSIONS),
         "compress_extensions": sorted(COMPRESSIBLE_EXTENSIONS),
+        "merge_extensions": sorted(MERGEABLE_EXTENSIONS),
         "ghostscript": compression.ghostscript_available(),
     }
 
@@ -239,6 +245,37 @@ async def compress_document(
             "X-Original-Size": str(len(content)),
             "X-Compressed-Size": str(len(compressed)),
         },
+    )
+
+
+@app.post("/api/merge", tags=["merge"])
+async def merge_documents(files: list[UploadFile] = File(...)):
+    """Merge two or more uploaded PDF files, in order, into one PDF."""
+    if len(files) < merging.MIN_MERGE_FILES:
+        raise HTTPException(
+            status_code=400, detail="Select at least two PDF files to merge."
+        )
+
+    contents: list[bytes] = []
+    for file in files:
+        content, _extension = await _read_upload(file, MERGEABLE_EXTENSIONS)
+        contents.append(content)
+
+    try:
+        merged = await run_in_threadpool(merging.merge_pdfs, contents)
+    except merging.EncryptedPdfError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to merge %d PDFs", len(files))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to merge the PDFs. One of the files may be corrupt or unsupported.",
+        )
+
+    return Response(
+        content=merged,
+        media_type="application/pdf",
+        headers={"Content-Disposition": _content_disposition("merged.pdf")},
     )
 
 

@@ -1,12 +1,13 @@
 # Doc2MD
 
-> Convert **PDF / DOCX** to clean **Markdown**, or **compress** PDF and
-> Word files — drag, drop, done.
+> Convert **PDF / DOCX** to clean **Markdown**, **compress** PDF and
+> Word files, or **merge** multiple PDFs — drag, drop, done.
 
 Doc2MD is a small full-stack app with a React frontend and a FastAPI backend. It
 uses Microsoft's [`markitdown`](https://github.com/microsoft/markitdown) library
-to turn documents into Markdown (live preview, raw view, copy, download), and
-shrinks PDF/DOCX files with Ghostscript and Pillow.
+to turn documents into Markdown (live preview, raw view, copy, download),
+shrinks PDF/DOCX files with Ghostscript and Pillow, and merges PDFs with
+`pikepdf`.
 
 ![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)
 
@@ -16,6 +17,8 @@ shrinks PDF/DOCX files with Ghostscript and Pillow.
 - 🔄 **Convert** documents to Markdown — **live preview** + **raw** view
 - 🗜️ **Compress** PDF and DOCX files with selectable quality, showing how much
   smaller the result is
+- 📎 **Merge** two or more PDFs into one, with drag-and-drop queueing,
+  reordering, and removal before merging
 - 📋 **Copy to clipboard** and 💾 **download** results
 - 🔒 Sanitized HTML preview (DOMPurify) — safe rendering of untrusted documents
 - 🧹 Files are processed in memory / a temp file and **never stored**
@@ -30,6 +33,7 @@ shrinks PDF/DOCX files with Ghostscript and Pillow.
 
 \* Ghostscript is an **optional** system binary. When present it is used for
 PDF compression (best results); otherwise the backend falls back to `pikepdf`.
+PDF merging always uses `pikepdf`.
 
 ## Getting started
 
@@ -107,6 +111,21 @@ curl -F "file=@document.pdf" \
 Error responses are JSON with a `detail` message and an appropriate status code
 (`400`, `413`, `415`, or `500`).
 
+### `POST /api/merge`
+
+Multipart form upload with two or more `files` fields, each a `.pdf`. Merges
+them, in the order given, into a single PDF and returns it as a binary
+download named `merged.pdf`.
+
+```bash
+curl -F "files=@first.pdf" -F "files=@second.pdf" \
+  http://localhost:8000/api/merge -o merged.pdf
+```
+
+Error responses are JSON with a `detail` message: `400` for fewer than two
+files, `415` for a non-PDF upload, and `422` if one of the PDFs is
+password-protected.
+
 ### `GET /health`
 
 Returns `{"status": "ok"}` for liveness checks.
@@ -115,8 +134,9 @@ Returns `{"status": "ok"}` for liveness checks.
 
 ```
 pdf_to_md_app/
-├── main.py             # FastAPI backend (convert + compress endpoints)
+├── main.py             # FastAPI backend (convert + compress + merge endpoints)
 ├── compression.py      # PDF/DOCX compression helpers
+├── merging.py          # PDF merging helpers
 ├── requirements.txt    # Python dependencies
 ├── Dockerfile          # Backend container image
 ├── render.yaml         # Render.com deployment blueprint
