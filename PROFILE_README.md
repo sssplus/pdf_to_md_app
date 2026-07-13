@@ -188,9 +188,9 @@ soumedhik:
 
 <div align="center">
 
-<img src="https://github-readme-stats.vercel.app/api?username=sssplus&show_icons=true&theme=github_dark&hide_border=true&bg_color=0d1117&title_color=58a6ff&icon_color=58a6ff&text_color=c9d1d9&border_radius=12&count_private=false" width="48%" alt="GitHub Stats"/>
+<img src="https://github-readme-stats.vercel.app/api?username=sssplus&show_icons=true&theme=github_dark&hide_border=true&bg_color=0d1117&title_color=58a6ff&icon_color=58a6ff&text_color=c9d1d9&border_radius=12&cache_seconds=21600" width="48%" alt="GitHub Stats"/>
 &nbsp;
-<img src="https://github-readme-stats.vercel.app/api/top-langs/?username=sssplus&layout=compact&theme=github_dark&hide_border=true&bg_color=0d1117&title_color=58a6ff&text_color=c9d1d9&border_radius=12&langs_count=6" width="40%" alt="Top Languages"/>
+<img src="https://github-readme-stats.vercel.app/api/top-langs/?username=sssplus&layout=compact&theme=github_dark&hide_border=true&bg_color=0d1117&title_color=58a6ff&text_color=c9d1d9&border_radius=12&langs_count=6&cache_seconds=21600" width="40%" alt="Top Languages"/>
 
 </div>
 
